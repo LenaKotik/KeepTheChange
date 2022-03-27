@@ -7,17 +7,25 @@ public sealed class PlayerController: MonoBehaviour
     enum PlayerState
     {
         Interacting,
-        Inspecting
+        Inspecting,
+        Holding
     }
     public float sensitivity = 100f;
     public float maxInteractDistance = 10f;
+    public Vector2 HoldDistance = new Vector2(0.5f, 0.25f);
     public float InspectDistance = 1f;
+    public float ThrowForce = 10f;
     // ---
     float rY = 0f;
-    float rYIns = 0f;
-    float rXIns = 0f;
-    Interactable? I = null;
-    Inspectable? Ins = null;
+    Vector2 rIns = new Vector2(0f, 0f);
+
+    Interactable? Intrct = null;
+    Inspectable? Inspct = null;
+    Pickable? Pcup = null;
+
+    Pickable? Held = null;
+    Transform? HeldParent = null;
+
     PlayerState state = PlayerState.Interacting;
 
     void LookAround()
@@ -35,27 +43,46 @@ public sealed class PlayerController: MonoBehaviour
         RaycastHit raycast = new RaycastHit();
         if (Physics.Raycast(ray, out raycast, maxInteractDistance))
         {
-            I = raycast.collider.GetComponent<Interactable>();
-            Ins = raycast.collider.GetComponent<Inspectable>();
+            Intrct = raycast.collider.GetComponent<Interactable>();
+            Inspct = raycast.collider.GetComponent<Inspectable>();
+            Pcup = raycast.collider.GetComponent<Pickable>();
         }
         else
         {
-            I = null;
-            Ins = null;
+            Intrct = null;
+            Inspct = null;
+            Pcup = null;
         }
+    }
+    void PickUp()
+    {
+        if (Pcup != null)
+        {
+            state = PlayerState.Holding;
+            Held = Pcup;
+            Held.IsHeld = true;
+            Held.GetComponent<Rigidbody>().isKinematic = true;
+            //Held.transform.localPosition = transform.forward * HoldDistance.x - transform.up * HoldDistance.y;
+            HeldParent = Held.transform.parent;
+            Held.transform.SetParent(transform, true);
+
+            return;
+        }
+        throw new System.InvalidOperationException("Attempting to pick up null"); 
+
     }
     void Inspect()
     {
-        if (Ins != null)
+        if (Inspct != null)
         {
-            Rigidbody? r = Ins.GetComponent<Rigidbody>();
+            Rigidbody? r = Inspct.GetComponent<Rigidbody>();
             if (r != null)
                 r.MovePosition(transform.position + transform.forward * InspectDistance);
 
-            rXIns += Input.GetAxis("Mouse X") * sensitivity * Time.deltaTime;
-            rYIns += Input.GetAxis("Mouse Y") * sensitivity * Time.deltaTime;
+            rIns += new Vector2( Input.GetAxis("Mouse X") * sensitivity * Time.deltaTime,
+                                 Input.GetAxis("Mouse Y") * sensitivity * Time.deltaTime );
 
-            Ins.transform.localEulerAngles = new Vector3(rYIns, -rXIns, 1);
+            Inspct.transform.localEulerAngles = new Vector3(rIns.x,rIns.y, 1);
 
             return;
         }
@@ -63,14 +90,14 @@ public sealed class PlayerController: MonoBehaviour
     }
     void SetInspecting(bool value = true)
     {
-        if (Ins != null)
+        if (Inspct != null)
         {
             state = value ? PlayerState.Inspecting : PlayerState.Interacting;
-            Ins.SetUp(!value);
+            Inspct.SetUp(!value);
 
             return;
         }
-        throw new System.InvalidOperationException("trying to inspect when Ins is null");
+        throw new System.InvalidOperationException("Attempting to inspect null");
     }
     void Start()
     {
@@ -86,13 +113,43 @@ public sealed class PlayerController: MonoBehaviour
                 Raycast();
                 if (Input.GetMouseButtonDown(0)) // Left click
                 {
-                    if (Ins != null)
+                    if (Inspct != null)
                         SetInspecting();
+                    else if (Pcup != null)
+                        PickUp();
                     else
-                        I?.Interact();
+                        Intrct?.Interact();
                 }
-
             break;
+            case PlayerState.Holding:
+#pragma warning disable CS8602
+                LookAround();
+
+                if (Input.GetMouseButtonDown(0)) // Left click
+                {
+                    Held.Use();
+                }
+                if (Input.GetMouseButtonDown(1)) // Right click
+                {
+                    bool placed = Held.Place();
+                    Held.IsHeld = !placed;
+                    if (placed)
+                    {
+                        Held =  null;
+                        state = PlayerState.Interacting;
+                    }
+                }
+                if (Input.GetMouseButtonDown(2)) // Middle 'click'
+                {
+                    Held.GetComponent<Rigidbody>().isKinematic = false;
+                    // Throw the item forward, a little bit upward
+                    Held.GetComponent<Rigidbody>().AddForceAtPosition((transform.forward + transform.up * 0.5f) * ThrowForce, Held.transform.position-transform.forward);
+                    Held.transform.SetParent(HeldParent);
+                    Held = null;
+                    state = PlayerState.Interacting;
+                }
+#pragma warning restore CS8602
+                break;
             case PlayerState.Inspecting:
                 Inspect();
                 if (Input.GetMouseButtonDown(1)) // Right click
